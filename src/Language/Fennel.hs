@@ -1,5 +1,3 @@
-{-# LANGUAGE UndecidableInstances #-}
-
 module Language.Fennel where
 
 import Control.Monad.Combinators
@@ -8,7 +6,6 @@ import Data.Functor (void)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Void (Void)
-import GHC.Show (appPrec, appPrec1, showSpace)
 import Text.Megaparsec qualified as Megaparsec
 import Text.Megaparsec.Char qualified as Megaparsec
 import Prelude hiding (exponent)
@@ -30,92 +27,78 @@ data Delimiter
   deriving stock (Show)
 
 newtype Form
-  = Form (FormF Form)
-
-instance Show Form where
-  showsPrec p = \case
-    HashForm x -> showParen (p > appPrec) (showString "HashForm " . showsPrec appPrec1 x)
-    ListForm delim xs ->
-      showParen (p > appPrec) (showString "ListForm " . shows delim . showSpace . showList xs)
-    NumberForm x -> showParen (p > appPrec) (showString "NumberForm " . shows x)
-    QuoteForm x -> showParen (p > appPrec) (showString "QuoteForm " . showsPrec appPrec1 x)
-    StringForm x -> showParen (p > appPrec) (showString "StringForm " . shows x)
-    SymbolForm x -> showParen (p > appPrec) (showString "SymbolForm " . shows x)
-    UnquoteForm x -> showParen (p > appPrec) (showString "UnquoteForm " . showsPrec appPrec1 x)
-
-pattern HashForm :: Form -> Form
-pattern HashForm x = Form (HashFormF x)
-
-pattern ListForm :: Delimiter -> [Form] -> Form
-pattern ListForm x y = Form (ListFormF x y)
-
-pattern NumberForm :: Text -> Form
-pattern NumberForm x = Form (NumberFormF x)
-
-pattern QuoteForm :: Form -> Form
-pattern QuoteForm x = Form (QuoteFormF x)
-
-pattern StringForm :: Text -> Form
-pattern StringForm x = Form (StringFormF x)
-
-pattern SymbolForm :: Text -> Form
-pattern SymbolForm x = Form (SymbolFormF x)
-
-pattern UnquoteForm :: Form -> Form
-pattern UnquoteForm x = Form (UnquoteFormF x)
-
-{-# COMPLETE HashForm, ListForm, NumberForm, QuoteForm, StringForm, SymbolForm, UnquoteForm #-}
+  = Form (L (FormF Form))
+  deriving stock (Show)
 
 type Parser a =
   Megaparsec.Parsec Void Text a
+
+data L a = L
+  { startLine :: !Megaparsec.Pos,
+    startCol :: !Megaparsec.Pos,
+    endLine :: !Megaparsec.Pos,
+    endCol :: !Megaparsec.Pos,
+    value :: !a
+  }
+  deriving stock (Show)
 
 formP :: Parser Form
 formP =
   Form <$> formFP formP
 
-formFP :: Parser a -> Parser (FormF a)
-formFP parser =
-  choice
-    [ listFormP '(' ')' ParenDelimiter,
-      listFormP '{' '}' CurlyBracketDelimiter,
-      listFormP '[' ']' SquareBracketDelimiter,
-      quoteFormP,
-      unquoteFormP,
-      hashFormP,
-      symbolFormP,
-      numberFormP,
-      stringFormP
-    ]
+formFP :: forall a. Parser a -> Parser (L (FormF a))
+formFP parser = do
+  whitespaceP
+  Megaparsec.SourcePos _ startLine startCol <- Megaparsec.getSourcePos
+  value <-
+    choice
+      [ listFormP '(' ')' ParenDelimiter,
+        listFormP '{' '}' CurlyBracketDelimiter,
+        listFormP '[' ']' SquareBracketDelimiter,
+        quoteFormP,
+        unquoteFormP,
+        hashFormP,
+        symbolFormP,
+        numberFormP,
+        stringFormP
+      ]
+  Megaparsec.SourcePos _ endLine endCol <- Megaparsec.getSourcePos
+  pure L {startLine, startCol, endLine, endCol, value}
   where
+    listFormP :: Char -> Char -> Delimiter -> Parser (FormF a)
     listFormP ldelim rdelim delim = do
       _ <- Megaparsec.char ldelim
       whitespaceP
       forms <- many parser
-      _ <- Megaparsec.char rdelim
       whitespaceP
+      _ <- Megaparsec.char rdelim
       pure (ListFormF delim forms)
 
+    quoteFormP :: Parser (FormF a)
     quoteFormP = do
       _ <- Megaparsec.char '`'
       form <- parser
       pure (QuoteFormF form)
 
+    unquoteFormP :: Parser (FormF a)
     unquoteFormP = do
       _ <- Megaparsec.char ','
       form <- parser
       pure (UnquoteFormF form)
 
+    hashFormP :: Parser (FormF a)
     hashFormP = do
       _ <- Megaparsec.char '#'
       form <- parser
       pure (HashFormF form)
 
+    symbolFormP :: Parser (FormF a)
     symbolFormP = empty
 
+    numberFormP :: Parser (FormF a)
     numberFormP = do
       -- Why try: if we parse a sign (+/-), then no numbers, we don't want to have committed to parsing a number
       number <- Megaparsec.try (choice [hexNumberP, decimalNumberP])
-      whitespaceP
       pure (NumberFormF number)
       where
         hexNumberP =
@@ -126,16 +109,19 @@ formFP parser =
           sign <- signP
           integral <- Megaparsec.takeWhileP (Just "digit") Char.isDigit
           fractional <-
-            choice
-              [ do
-                  dot <- Text.singleton <$> Megaparsec.char '.'
-                  num <-
-                    (if Text.null integral then Megaparsec.takeWhile1P else Megaparsec.takeWhileP)
-                      (Just "digit")
-                      Char.isDigit
-                  pure (dot <> num),
-                pure Text.empty
-              ]
+            if Text.null integral
+              then do
+                dot <- Text.singleton <$> Megaparsec.char '.'
+                num <- Megaparsec.takeWhile1P (Just "digit") Char.isDigit
+                pure (dot <> num)
+              else
+                choice
+                  [ do
+                      dot <- Text.singleton <$> Megaparsec.char '.'
+                      num <- Megaparsec.takeWhileP (Just "digit") Char.isDigit
+                      pure (dot <> num),
+                    pure Text.empty
+                  ]
           exponent <-
             choice
               [ do
@@ -155,6 +141,7 @@ formFP parser =
               pure ""
             ]
 
+    stringFormP :: Parser (FormF a)
     stringFormP = empty
 
 whitespaceP :: Parser ()
