@@ -3,7 +3,13 @@ name: language-fennel
 version: 0
 
 library
-  build-depends: base, megaparsec, text
+  build-depends: base, megaparsec, parser-combinators, text
+  default-extensions:
+    BlockArguments
+    DerivingStrategies
+    LambdaCase
+    OverloadedStrings
+    PatternSynonyms
   default-language: GHC2021
   exposed-modules: Language.Fennel
   ghc-options: -Wall
