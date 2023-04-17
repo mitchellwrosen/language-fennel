@@ -1,0 +1,10 @@
+cabal-version: 2.4
+name: language-fennel
+version: 0
+
+library
+  build-depends: base, megaparsec, text
+  default-language: GHC2021
+  exposed-modules: Language.Fennel
+  ghc-options: -Wall
+  hs-source-dirs: src
