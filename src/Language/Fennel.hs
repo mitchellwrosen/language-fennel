@@ -26,13 +26,13 @@ data Syntax = Syntax
 
 data Form
   = EmptyForm
-  | HashForm Syntax
+  | HashForm Form
   | ListForm Delimiter [Syntax]
   | NumberForm Text
-  | QuoteForm Syntax
+  | QuoteForm Form
   | StringForm Text
   | SymbolForm Text
-  | UnquoteForm Syntax
+  | UnquoteForm Form
   deriving stock (Show)
 
 data Delimiter
@@ -118,19 +118,19 @@ formP =
     quoteFormP :: Parser Form
     quoteFormP = do
       _ <- Megaparsec.char '`'
-      form <- syntaxP
+      form <- formP
       pure (QuoteForm form)
 
     unquoteFormP :: Parser Form
     unquoteFormP = do
       _ <- Megaparsec.char ','
-      form <- syntaxP
+      form <- formP
       pure (UnquoteForm form)
 
     hashFormP :: Parser Form
     hashFormP = do
       _ <- Megaparsec.char '#'
-      form <- syntaxP
+      form <- formP
       pure (HashForm form)
 
     symbolFormP :: Parser Form
