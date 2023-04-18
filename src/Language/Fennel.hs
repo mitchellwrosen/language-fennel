@@ -15,8 +15,8 @@ import Prelude hiding (exponent, span)
 -----------------------------------------------------------------------------------------------------------------------
 -- Types
 
--- | A piece of syntax: 0+ line comments (the first of which may be on the same line as the preceding syntax), plus a
--- form (which may be empty only there is at least one comment).
+-- | 0+ line comments (the first of which may be on the same line as the preceding syntax), plus a
+-- form.
 data Syntax = Syntax
   { comments :: ![Comment],
     span :: !Span,
@@ -24,10 +24,16 @@ data Syntax = Syntax
   }
   deriving stock (Show)
 
+-- | 0+ syntaxes and 0+ trailing comments (the first of which may be on the same line as the last syntax in the list).
+data SyntaxList = SyntaxList
+  { syntaxes :: ![Syntax],
+    comments :: ![Comment]
+  }
+  deriving stock (Show)
+
 data Form
-  = EmptyForm
-  | HashForm Form
-  | ListForm Delimiter [Syntax]
+  = HashForm Form
+  | ListForm Delimiter SyntaxList
   | NumberForm Text
   | QuoteForm Form
   | StringForm Text
@@ -70,23 +76,28 @@ data Loc = Loc
 type Parser a =
   Megaparsec.Parsec Void Text a
 
+-- | A syntax list parser.
+syntaxListP :: Parser SyntaxList
+syntaxListP = do
+  whitespaceP
+  let loop acc = do
+        comments <- many commentP
+        start <- getLoc
+        optional formP >>= \case
+          Nothing -> pure SyntaxList {syntaxes = reverse acc, comments}
+          Just form -> do
+            end <- getLoc
+            let span = Span start end
+            loop (Syntax {comments, span, form} : acc)
+  loop []
+
 -- | A syntax parser.
 syntaxP :: Parser Syntax
 syntaxP = do
   whitespaceP
   comments <- many commentP
   start <- getLoc
-  -- If there are any preceding comments, then allow parsing an empty form.
-  -- This allows us to parse the comments at the end of a list, as in:
-  --
-  --   (foo
-  --     bar
-  --     ; Hi I'm preceding nothing
-  --   )
-  form <-
-    if null comments
-      then formP
-      else formP <|> pure EmptyForm
+  form <- formP
   end <- getLoc
   let span = Span start end
   pure Syntax {comments, span, form}
@@ -109,8 +120,7 @@ formP =
     listFormP :: Char -> Char -> Delimiter -> Parser Form
     listFormP ldelim rdelim delim = do
       _ <- Megaparsec.char ldelim
-      whitespaceP
-      forms <- many syntaxP
+      forms <- syntaxListP
       whitespaceP
       _ <- Megaparsec.char rdelim
       pure (ListForm delim forms)
