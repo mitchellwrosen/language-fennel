@@ -3,35 +3,36 @@ module Language.Fennel where
 import Control.Monad.Combinators
 import Data.Char qualified as Char
 import Data.Functor (void)
+import Data.List.NonEmpty qualified as List (NonEmpty)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Void (Void)
+-- import Prettyprinter
 import Text.Megaparsec qualified as Megaparsec
 import Text.Megaparsec.Char qualified as Megaparsec
 import Prelude hiding (exponent, span)
 
+-----------------------------------------------------------------------------------------------------------------------
+-- Types
+
 -- | A piece of syntax: 0+ line comments (the first of which may be on the same line as the preceding syntax), plus a
 -- form (which may be empty only there is at least one comment).
-newtype Syntax
-  = Syntax (SyntaxF Syntax)
-  deriving stock (Show)
-
-data SyntaxF a = SyntaxF
+data Syntax = Syntax
   { comments :: ![Comment],
     span :: !Span,
-    form :: !(Form a)
+    form :: !Form
   }
   deriving stock (Show)
 
-data Form a
+data Form
   = EmptyForm
-  | HashForm a
-  | ListForm Delimiter [a]
+  | HashForm Syntax
+  | ListForm Delimiter [Syntax]
   | NumberForm Text
-  | QuoteForm a
+  | QuoteForm Syntax
   | StringForm Text
   | SymbolForm Text
-  | UnquoteForm a
+  | UnquoteForm Syntax
   deriving stock (Show)
 
 data Delimiter
@@ -63,16 +64,15 @@ data Loc = Loc
   }
   deriving stock (Show)
 
+-----------------------------------------------------------------------------------------------------------------------
+-- Parsing
+
 type Parser a =
   Megaparsec.Parsec Void Text a
 
 -- | A syntax parser.
 syntaxP :: Parser Syntax
-syntaxP =
-  Syntax <$> syntaxFP syntaxP
-
-syntaxFP :: Parser a -> Parser (SyntaxF a)
-syntaxFP parser = do
+syntaxP = do
   whitespaceP
   comments <- many commentP
   start <- getLoc
@@ -85,15 +85,15 @@ syntaxFP parser = do
   --   )
   form <-
     if null comments
-      then formP parser
-      else formP parser <|> pure EmptyForm
+      then formP
+      else formP <|> pure EmptyForm
   end <- getLoc
   let span = Span start end
-  pure SyntaxF {comments, span, form}
+  pure Syntax {comments, span, form}
 
 -- | A form parser.
-formP :: forall a. Parser a -> Parser (Form a)
-formP parser =
+formP :: Parser Form
+formP =
   choice
     [ listFormP '(' ')' Paren,
       listFormP '{' '}' CurlyBracket,
@@ -106,37 +106,37 @@ formP parser =
       stringFormP
     ]
   where
-    listFormP :: Char -> Char -> Delimiter -> Parser (Form a)
+    listFormP :: Char -> Char -> Delimiter -> Parser Form
     listFormP ldelim rdelim delim = do
       _ <- Megaparsec.char ldelim
       whitespaceP
-      forms <- many parser
+      forms <- many syntaxP
       whitespaceP
       _ <- Megaparsec.char rdelim
       pure (ListForm delim forms)
 
-    quoteFormP :: Parser (Form a)
+    quoteFormP :: Parser Form
     quoteFormP = do
       _ <- Megaparsec.char '`'
-      form <- parser
+      form <- syntaxP
       pure (QuoteForm form)
 
-    unquoteFormP :: Parser (Form a)
+    unquoteFormP :: Parser Form
     unquoteFormP = do
       _ <- Megaparsec.char ','
-      form <- parser
+      form <- syntaxP
       pure (UnquoteForm form)
 
-    hashFormP :: Parser (Form a)
+    hashFormP :: Parser Form
     hashFormP = do
       _ <- Megaparsec.char '#'
-      form <- parser
+      form <- syntaxP
       pure (HashForm form)
 
-    symbolFormP :: Parser (Form a)
+    symbolFormP :: Parser Form
     symbolFormP = empty
 
-    numberFormP :: Parser (Form a)
+    numberFormP :: Parser Form
     numberFormP = do
       -- Why try: if we parse a sign (+/-), then no numbers, we don't want to have committed to parsing a number
       number <- Megaparsec.try (choice [hexNumberP, decimalNumberP])
@@ -182,7 +182,7 @@ formP parser =
               pure ""
             ]
 
-    stringFormP :: Parser (Form a)
+    stringFormP :: Parser Form
     stringFormP = empty
 
 -- | A comment parser.
@@ -205,3 +205,30 @@ getLoc :: Parser Loc
 getLoc = do
   Megaparsec.SourcePos _ line col <- Megaparsec.getSourcePos
   pure Loc {line, col}
+
+-----------------------------------------------------------------------------------------------------------------------
+-- Pretty-printing
+
+type BlockCommentOut =
+  List.NonEmpty LineCommentOut
+
+type LineCommentOut =
+  Text
+
+data SyntaxOut = SyntaxOut
+  { blockCommentsWayAbove :: ![BlockCommentOut],
+    blockCommentJustAbove :: !(Maybe BlockCommentOut),
+    form :: !FormOut,
+    lineCommentJustAfter :: !(Maybe LineCommentOut)
+  }
+  deriving stock (Show)
+
+data FormOut
+  = HashFormOut FormOut
+  | ListFormOut Delimiter [SyntaxOut]
+  | NumberFormOut Text
+  | QuoteFormOut FormOut
+  | StringFormOut Text
+  | SymbolFormOut Text
+  | UnquoteFormOut FormOut
+  deriving stock (Show)

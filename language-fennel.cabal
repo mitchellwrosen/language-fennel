@@ -3,7 +3,12 @@ name: language-fennel
 version: 0
 
 library
-  build-depends: base, megaparsec, parser-combinators, text
+  build-depends:
+   base,
+   megaparsec,
+   parser-combinators,
+   prettyprinter ^>= 1.7.1,
+   text
   default-extensions:
     BlockArguments
     DerivingStrategies
